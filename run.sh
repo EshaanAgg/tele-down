@@ -12,8 +12,8 @@ setup_server() {
     cmake --build . --target install
     cd ../..
     mkdir server
-    mv telegram-bot-api/bin/telgram-bot-api server/
-    # rm -rf telegram-bot-api
+    mv telegram-bot-api/bin/telegram-bot-api server/server
+    rm -rf telegram-bot-api
 }
 
 # Check if the server executable exists
@@ -46,4 +46,5 @@ if [[ -z "$TELEGRAM_API_ID" || -z "$TELEGRAM_API_HASH" ]]; then
 fi
 
 echo "Starting the server..."
-./server/server --local
+cd server
+./server --local
