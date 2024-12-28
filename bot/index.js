@@ -3,11 +3,11 @@ const path = require('path');
 const axios = require('axios');
 const dotenv = require('dotenv');
 const unzipper = require('unzipper');
+const FormData = require('form-data');
 
 // CONSTANTS
-const DOWNLOAD_DIR = './downloads/';
 const UNZIP_DIR = './unzipped/';
-const BASE_SERVER_URL = 'http://localhost:8081/';
+const BASE_SERVER_URL = 'http://localhost:8081';
 const LEFT_OVER_POLLS = {
    zip_polls: [],
 };
@@ -20,8 +20,8 @@ let client = undefined;
  * Setup the bot with the Telegram API and initialize the client
  * @throws {Error} If the BOT_TOKEN is not found in the environment variables
  */
-const setupBot = () => {
-   dotenv.config();
+const setupBot = async () => {
+   dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
    const BOT_TOKEN = process.env.BOT_TOKEN;
    if (!BOT_TOKEN) {
@@ -30,8 +30,17 @@ const setupBot = () => {
    }
    client = axios.create({ baseURL: `${BASE_SERVER_URL}/bot${BOT_TOKEN}` });
 
-   if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR);
    if (!fs.existsSync(UNZIP_DIR)) fs.mkdirSync(UNZIP_DIR);
+
+   // Make a request to /getMe to check if the bot is running
+   try {
+      const getMeResponse = await client.get('/getMe');
+      const botName = getMeResponse.data.result.username;
+      console.log(`Bot "${botName}" is running...`);
+   } catch (error) {
+      console.error('Error starting the bot:', error.message);
+      process.exit(1);
+   }
 };
 
 /*
@@ -71,34 +80,53 @@ const sendPoll = async (chatId, question, options) => {
  * @returns {Promise<number>} The message ID of the sent document
  */
 const sendFile = async (chatId, filePath) => {
-   const response = await client.post('/sendDocument', {
-      chat_id: chatId,
-      document: fs.createReadStream(filePath),
-   });
-   return response.data.result.message_id;
-};
+   // Check the file type
+   const fileType = path.extname(filePath).slice(1);
 
+   // Send images using Multipart/form-data
+   if (['jpg', 'jpeg', 'png', 'gif'].includes(fileType)) {
+      let imageData = fs.readFileSync(filePath);
+      let formData = new FormData();
+      formData.append('chat_id', chatId);
+      formData.append('photo', imageData, {
+         filename: path.basename(filePath),
+      });
+
+      const response = await client.post('/sendPhoto', formData, {
+         headers: formData.getHeaders(),
+      });
+      return response.data.result.message_id;
+   }
+   // Send videos using Multipart/form-data
+   else if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(fileType)) {
+      let videoData = fs.readFileSync(filePath);
+      let formData = new FormData();
+      formData.append('chat_id', chatId);
+      formData.append('video', videoData, {
+         filename: path.basename(filePath),
+      });
+
+      const response = await client.post('/sendVideo', formData, {
+         headers: formData.getHeaders(),
+      });
+      return response.data.result.message_id;
+   } else {
+      const messageID = await sendMessage(
+         chatId,
+         `I don't support sending files of type "${fileType}" [File: "${path.basename(filePath)}"].`,
+      );
+      return messageID;
+   }
+};
 /*
  * Download a file from Telegram, given the file ID
  * @param {string} fileId - The file ID to download
- * @param {string} filePath - The path to save the downloaded file
- * @returns {Promise<void>} - A promise that resolves when the file is downloaded successfully
+ * @returns {Promise<File>} - A promise that resolves with the file of the downloaded file
+ * @throws {Error} If the file could not be downloaded
  */
-const downloadFile = async (fileId, filePath) => {
+const downloadFile = async (fileId) => {
    const response = await client.get(`/getFile?file_id=${fileId}`);
-   const filePathTelegram = response.data.result.file_path;
-
-   const writer = fs.createWriteStream(filePath);
-   const downloadUrl = `${BASE_SERVER_URL}/file/bot${BOT_TOKEN}/${filePathTelegram}`;
-   const downloadResponse = await axios.get(downloadUrl, {
-      responseType: 'stream',
-   });
-   downloadResponse.data.pipe(writer);
-
-   return new Promise((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-   });
+   return response.data.result;
 };
 
 /*
@@ -131,11 +159,10 @@ const handleMessage = async (chatId, message) => {
 const handleZipDocument = async (chatId, document) => {
    await sendMessage(chatId, `Received "${document.file_name}". Processing...`);
 
-   const filePath = path.join(DOWNLOAD_DIR, document.file_name);
-   await downloadFile(document.file_id, filePath);
+   const file = await downloadFile(document.file_id);
    await sendMessage(
       chatId,
-      `Downloaded "${document.file_name}" successfully on the server! You can find the file at "${filePath}" on the server.`,
+      `Downloaded "${document.file_name}" successfully on the server! You can find the file at "${file.file_path}" on the server.`,
    );
 
    const pollId = await sendPoll(
@@ -143,42 +170,56 @@ const handleZipDocument = async (chatId, document) => {
       'Would you like me to send the unzipped the files back to you?',
       ['Yes', 'No'],
    );
-   LEFT_OVER_POLLS['zip_polls'].push({ pollId, filePath, chatId });
+   LEFT_OVER_POLLS['zip_polls'].push({
+      pollId,
+      filePath: file.file_path,
+      fileName: document.file_name,
+      chatId,
+   });
 };
 
 /*
  * Processes the poll response recieved from the Telegram API
  * Currently, it only handles the ZIP poll response
  */
-const handlePollResponse = async (pollId, chatId, poll_answer) => {
+const handlePollResponse = async (poll) => {
    const pollIndex = LEFT_OVER_POLLS['zip_polls'].findIndex(
-      (poll) => poll.pollId === pollId && poll.chatId === chatId,
+      (p) => p.pollId === poll.id,
    );
    if (pollIndex === -1) {
-      await sendMessage(chatId, 'This poll could not be found in the system.');
+      console.error('Poll not found:', poll);
       return;
    }
 
    // Get the poll and remove it from the list
-   const { filePath } = LEFT_OVER_POLLS['zip_polls'][pollIndex];
+   const { filePath, chatId, fileName } =
+      LEFT_OVER_POLLS['zip_polls'][pollIndex];
    LEFT_OVER_POLLS['zip_polls'].splice(pollIndex, 1);
 
    // Process the poll response
-   const sendBack = poll_answer.option_ids[0] === 0;
+   const sendBack =
+      poll.options[poll.options.findIndex((option) => option.voter_count > 0)]
+         .text === 'Yes';
    if (sendBack) {
       const unzipDir = path.join(UNZIP_DIR, path.basename(filePath, '.zip'));
       if (!fs.existsSync(unzipDir)) fs.mkdirSync(unzipDir);
       await unzipFile(filePath, unzipDir);
+
       const files = fs.readdirSync(unzipDir);
       for (const file of files) {
          const fileToSend = path.join(unzipDir, file);
          await sendFile(chatId, fileToSend);
       }
-      fs.rmSync(filePath);
       fs.rmSync(unzipDir, { recursive: true, force: true });
-      await sendMessage(chatId, 'Cleanup completed.');
+      await sendMessage(
+         chatId,
+         `Cleanup completed for the file "${fileName}".`,
+      );
    } else {
-      await sendMessage(chatId, 'No files were sent back to you.');
+      await sendMessage(
+         chatId,
+         `Process completed for the file "${fileName}".`,
+      );
    }
 };
 
@@ -197,31 +238,34 @@ const handleDocument = async (chatId, document) => {
  * Destructure's the update object and dispatches it to the appropriate handler
  */
 const handleUpdate = async (update) => {
-   const { chat, text, document, poll_answer } = update.message;
-   const chatId = chat.id;
+   if (update.message) {
+      const { chat, text, document } = update.message;
+      const chatId = chat.id;
 
-   if (document) await handleDocument(chatId, document);
-   else if (text) await handleMessage(chatId, text);
-   else if (poll_answer)
-      await handlePollResponse(poll_answer.poll_id, chatId, poll_answer);
+      if (document) await handleDocument(chatId, document);
+      else if (text) await handleMessage(chatId, text);
+      else {
+         await sendMessage(chatId, "I don't understand that message.");
+         console.error('Unknown message:', update);
+      }
+   } else if (update.poll) await handlePollResponse(update.poll);
+   else console.error('Unknown update:', update);
 };
 
 // Create a IIFE to start the bot
 (async () => {
-   setupBot();
+   await setupBot();
    let offset = 0;
 
    while (true) {
       try {
          const response = await client.get('/getUpdates', {
-            params: { offset },
+            params: { offset, timeout: 30 },
          });
          const updates = response.data.result;
          for (const update of updates) {
             offset = update.update_id + 1;
-            if (update.message) {
-               await handleUpdate(update);
-            }
+            await handleUpdate(update);
          }
       } catch (error) {
          console.error('Error processing updates:', error.message);
