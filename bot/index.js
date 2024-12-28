@@ -98,7 +98,7 @@ const sendFile = async (chatId, filePath) => {
       return response.data.result.message_id;
    }
    // Send videos using Multipart/form-data
-   else if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(fileType)) {
+   else if (['mp4', 'avi', 'mov', 'mkv', 'webm', ".ts"].includes(fileType)) {
       let videoData = fs.readFileSync(filePath);
       let formData = new FormData();
       formData.append('chat_id', chatId);
@@ -204,8 +204,10 @@ const handlePollResponse = async (poll) => {
       const unzipDir = path.join(UNZIP_DIR, path.basename(filePath, '.zip'));
       if (!fs.existsSync(unzipDir)) fs.mkdirSync(unzipDir);
       await unzipFile(filePath, unzipDir);
-
+      
       const files = fs.readdirSync(unzipDir);
+      await sendMessage(chatId, `Sending ${files.length} to you!`)
+      
       for (const file of files) {
          const fileToSend = path.join(unzipDir, file);
          await sendFile(chatId, fileToSend);
