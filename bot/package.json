@@ -1,0 +1,19 @@
+{
+   "name": "bot",
+   "version": "1.0.0",
+   "main": "index.js",
+   "scripts": {
+      "format": "prettier --write ."
+   },
+   "author": "EshaanAgg",
+   "license": "ISC",
+   "description": "",
+   "dependencies": {
+      "axios": "^1.7.9",
+      "dotenv": "^16.4.7",
+      "unzipper": "^0.12.3"
+   },
+   "devDependencies": {
+      "prettier": "^3.4.2"
+   }
+}
