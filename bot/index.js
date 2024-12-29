@@ -218,7 +218,7 @@ const extractArchive = async (archiveFilePath, outputDir) => {
  * @returns {Promise<void>} - A promise that resolves when all the files are sent
  */
 const recursiveSendFiles = async (dir, chatId, fileName, ident = 0) => {
-   console.log(`[SEND FILES] ${'-'.repeat(ident)} ${dir}`);
+   console.log(`[SEND FILES] ${' '.repeat(ident)} ${dir}`);
    const files = fs.readdirSync(dir);
    for (const file of files) {
       const filePath = path.join(dir, file);
@@ -304,6 +304,7 @@ const handlePollResponse = async (poll) => {
       console.log(`[UNZIP] Completed "${fileName}"`);
 
       await recursiveSendFiles(unzipDir, chatId, fileName);
+      console.log(`[SEND FILES] Completed "${fileName}"`);
 
       // Cleanup the unzipped directory
       fs.rmSync(unzipDir, { recursive: true, force: true });
@@ -377,10 +378,18 @@ const handleUpdate = async (update) => {
          const updates = response.data.result;
          for (const update of updates) {
             offset = update.update_id + 1;
-            await handleUpdate(update);
+            try {
+               await handleUpdate(update);
+            } catch (error) {
+               console.error('Error handling update:', error.message);
+               await sendMessage(
+                  update.message.chat.id,
+                  `An error occured while processing the update.\n\nMessage: ${error.message}`,
+               );
+            }
          }
       } catch (error) {
-         console.error('Error processing updates:', error.message);
+         console.error('Error recieving updates:', error.message);
       }
    }
 })();
