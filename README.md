@@ -12,7 +12,13 @@ cp .sample.env .env
 
 2. You would need to get a API ID and API HASH from Telegram. You can get it by following the steps mentioned [here](https://core.telegram.org/api/obtaining_api_id). This a one time thing, and should take 2 minutes at max. Set the same as `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in the `.env` file.
 
-3. Now you would need to create a bot on Telegram that would be used to download files. You can create a bot by following the steps mentioned [here](https://core.telegram.org/bots#botfather). Set the token of the bot as `TELEGRAM_BOT_TOKEN` in the `.env` file. Should take 2 minutes at max again.
+3. Now you would need to create a bot on Telegram that would be used to download files. You can create a bot by sending the `/newbot` command to the [@BotFather](https://t.me/botfather) chat, and following the onscreen instructions to obtain the bot token. Your token will look something like this:
+
+```
+4839574812:AAFD39kkdpWt3ywyRZergyOLMaJhac60qc
+```
+
+Set the token of the bot as `TELEGRAM_BOT_TOKEN` in the `.env` file. Should take 2 minutes at max again.
 
 4. Run the server! This script will take 5-10 minutes to run for the first time as it would download the required dependencies and build it using `gcc` and `make` for your platform. In subsequent runs, it would start instantly.
 
