@@ -65,15 +65,49 @@ const sendDownloadPathMessage = async (chatId, filePath) => {
  * Send a message to a chat
  * @param {number} chatId - The chat ID to send the message to
  * @param {string} text - The message text
+ * @param {object} additionalConfiguration - Additional configuration for the message
  * @returns {Promise<number>} The message ID of the sent message
  */
-const sendMessage = async (chatId, text) => {
-   const response = await client.post('/sendMessage', {
-      chat_id: chatId,
-      text,
-      parse_mode: 'Markdown',
-   });
-   return response.data.result.message_id;
+const sendMessage = async (chatId, text, additionalConfiguration = {}) => {
+   try {
+      const response = await client.post('/sendMessage', {
+         chat_id: chatId,
+         text,
+         parse_mode: 'Markdown',
+         ...additionalConfiguration,
+      });
+      return response.data.result.message_id;
+   } catch (error) {
+      console.error('Error sending message:', {
+         chatId,
+         text,
+         additionalConfiguration,
+         error: error.message,
+      });
+      return -1;
+   }
+};
+
+/*
+ * Delete a message from a chat
+ * @param {number} chatId - The chat ID to delete the message from
+ * @param {number} messageId - The message ID to delete
+ * @returns {Promise<void>}
+ * @throws {Error} If the message could not be deleted
+ */
+const deleteMessage = async (chatId, messageId) => {
+   try {
+      await client.post('/deleteMessage', {
+         chat_id: chatId,
+         message_id: messageId,
+      });
+   } catch (error) {
+      console.error('Error deleting message:', {
+         chatId,
+         messageId,
+         error: error.message,
+      });
+   }
 };
 
 /*
@@ -106,6 +140,7 @@ const sendPhoto = async (chatId, photoPath) => {
    formData.append('photo', photoData, {
       filename: path.basename(photoPath),
    });
+   formData.append('caption', path.basename(photoPath));
 
    const response = await client.post('/sendPhoto', formData, {
       headers: formData.getHeaders(),
@@ -127,6 +162,7 @@ const sendVideo = async (chatId, videoPath) => {
    formData.append('video', videoData, {
       filename: path.basename(videoPath),
    });
+   formData.append('caption', path.basename(videoPath));
 
    const response = await client.post('/sendVideo', formData, {
       headers: formData.getHeaders(),
@@ -209,22 +245,160 @@ const extractArchive = async (archiveFilePath, outputDir) => {
    }
 };
 
-/*
+/**
  * Recursively send files in a directory to a chat
  * @param {string} dir - The directory to send the files from
  * @param {number} chatId - The chat ID to send the files to
  * @param {string} fileName - The name of the file to send
- * @param {number} ident - The number of spaces to indent the message
- * @returns {Promise<void>} - A promise that resolves when all the files are sent
+ * @returns {Promise<void>}
  */
-const recursiveSendFiles = async (dir, chatId, fileName, ident = 0) => {
-   console.log(`[SEND FILES] ${' '.repeat(ident)} ${dir}`);
-   const files = fs.readdirSync(dir);
-   for (const file of files) {
+const recursiveSendFiles = async (dir, chatId, fileName) => {
+   console.log(`[SEND FILES] ${dir}`);
+
+   const directoryItems = fs.readdirSync(dir);
+   const files = directoryItems.filter((item) =>
+      fs.statSync(path.join(dir, item)).isFile(),
+   );
+   const subDirs = directoryItems.filter((item) =>
+      fs.statSync(path.join(dir, item)).isDirectory(),
+   );
+
+   const multimediaFiles = getMultimediaFiles(files);
+
+   let message = `📁 \`${dir}\`
+
+This directory has: 
+- ${files.length} files 🗒️
+- ${subDirs.length} sub directories 📁
+- ${multimediaFiles.length} multimedia files 📷🎥`;
+
+   if (files.length)
+      message += `\n\nExample Multimedia Files: \n${files
+         .slice(0, 5)
+         .map((f) => `- \`${f}\``)
+         .join('\n')}`;
+   if (subDirs.length)
+      message += `\n\nExample Subdirectories: \n${subDirs
+         .slice(0, 5)
+         .map((d) => `- \`${d}\``)
+         .join('\n')}`;
+
+   await sendMessage(chatId, message);
+
+   if (multimediaFiles.length > 0) {
+      await askToSendMultimediaFiles(chatId, dir, fileName);
+   }
+
+   if (subDirs.length > 0) {
+      await askToExploreSubdirectories(chatId, dir, fileName);
+   }
+};
+
+/**
+ * Get multimedia files from a list of files
+ * @param {string[]} files - The list of files
+ * @returns {string[]} - The list of multimedia files
+ */
+const getMultimediaFiles = (files) => {
+   return files.filter((file) => {
+      const fileType = path.extname(file).slice(1);
+      return (
+         SUPPORTED_PHOTO_TYPES.includes(fileType) ||
+         SUPPORTED_VIDEO_TYPES.includes(fileType)
+      );
+   });
+};
+
+/**
+ * Ask the user if they want to send multimedia files
+ * @param {number} chatId - The chat ID
+ * @param {string} dir - The directory path
+ * @param {string} fileName - The file name
+ */
+const askToSendMultimediaFiles = async (chatId, dir, fileName) => {
+   await sendMessage(
+      chatId,
+      `Do you want to send the multimedia files from the folder \`${dir}\`?`,
+      {
+         reply_markup: {
+            inline_keyboard: [
+               [
+                  {
+                     text: 'Yes',
+                     callback_data: `send_media_files:${dir}:${fileName}`,
+                  },
+                  {
+                     text: 'No',
+                     callback_data: 'ignore',
+                  },
+               ],
+            ],
+         },
+      },
+   );
+};
+
+/**
+ * Ask the user if they want to explore subdirectories
+ * @param {number} chatId - The chat ID
+ * @param {string} dir - The directory path
+ * @param {string} fileName - The file name
+ */
+const askToExploreSubdirectories = async (chatId, dir, fileName) => {
+   await sendMessage(
+      chatId,
+      `Do you want to explore the subdirectories for this folder \`${dir}\`?`,
+      {
+         reply_markup: {
+            inline_keyboard: [
+               [
+                  {
+                     text: 'Yes',
+                     callback_data: `explore_subdirs:${dir}:${fileName}`,
+                  },
+                  {
+                     text: 'No',
+                     callback_data: 'ignore',
+                  },
+               ],
+            ],
+         },
+      },
+   );
+};
+
+/**
+ * Handle sending multimedia files in a directory to a chat
+ * @param {number} chatId - The chat ID
+ * @param {string} dir - The directory path
+ * @param {string} fileName - The file name
+ */
+const handleSendMediaFileResponse = async (chatId, dir, _fileName) => {
+   const files = fs
+      .readdirSync(dir)
+      .filter((file) => !fs.statSync(path.join(dir, file)).isDirectory());
+   const multimediaFiles = getMultimediaFiles(files);
+
+   for (const file of multimediaFiles) {
       const filePath = path.join(dir, file);
-      if (fs.statSync(filePath).isDirectory())
-         await recursiveSendFiles(filePath, chatId, fileName, ident + 2);
-      else await sendFile(chatId, filePath);
+      await sendFile(chatId, filePath);
+   }
+};
+
+/**
+ * Handle exploring subdirectories
+ * @param {number} chatId - The chat ID
+ * @param {string} dir - The directory path
+ * @param {string} fileName - The file name
+ */
+const handleExploreSubdirsResponse = async (chatId, dir, fileName) => {
+   const subDirs = fs
+      .readdirSync(dir)
+      .filter((file) => fs.statSync(path.join(dir, file)).isDirectory());
+
+   for (const subDir of subDirs) {
+      const subDirPath = path.join(dir, subDir);
+      await recursiveSendFiles(subDirPath, chatId, fileName);
    }
 };
 
@@ -304,14 +478,6 @@ const handlePollResponse = async (poll) => {
       console.log(`[UNZIP] Completed "${fileName}"`);
 
       await recursiveSendFiles(unzipDir, chatId, fileName);
-      console.log(`[SEND FILES] Completed "${fileName}"`);
-
-      // Cleanup the unzipped directory
-      fs.rmSync(unzipDir, { recursive: true, force: true });
-      await sendMessage(
-         chatId,
-         `Cleanup completed for the file "${fileName}".`,
-      );
    } else {
       await sendMessage(
          chatId,
@@ -344,6 +510,29 @@ const handleMultimedia = async (chatId, photo) => {
    }
 };
 
+const handleCallbackQuery = async (callbackData) => {
+   const message = callbackData.data;
+
+   // Delete the original message
+   const chatId = callbackData.message.chat.id;
+   await deleteMessage(chatId, callbackData.message.message_id);
+
+   if (message === 'ignore') return;
+   if (message.startsWith('send_media_files')) {
+      const [_, dir, fileName] = message.split(':');
+      await handleSendMediaFileResponse(chatId, dir, fileName);
+      return;
+   }
+
+   if (message.startsWith('explore_subdirs')) {
+      const [_, dir, fileName] = message.split(':');
+      await handleExploreSubdirsResponse(chatId, dir, fileName);
+      return;
+   }
+
+   console.error('Unknown callback query:', callbackData);
+};
+
 /*
  * Process updates from the Telegram API
  * Destructure's the update object and dispatches it to the appropriate handler
@@ -362,6 +551,8 @@ const handleUpdate = async (update) => {
          console.error('Unknown message:', update);
       }
    } else if (update.poll) await handlePollResponse(update.poll);
+   else if (update.callback_query)
+      await handleCallbackQuery(update.callback_query);
    else console.error('Unknown update:', update);
 };
 
@@ -369,12 +560,29 @@ const handleUpdate = async (update) => {
 (async () => {
    await setupBot();
    let offset = 0;
+   let firstRun = true;
 
    while (true) {
       try {
          const response = await client.get('/getUpdates', {
-            params: { offset, timeout: 30 },
+            params: { offset, timeout: firstRun ? 0 : 30 },
          });
+
+         // Skip the updates from the first run
+         // as they may be old & already processed
+         if (firstRun) {
+            if (response.data.result.length !== 0) {
+               offset =
+                  response.data.result[response.data.result.length - 1]
+                     .update_id + 1;
+               console.log(
+                  `[STARUP] Skipping ${response.data.length} updates from the past runs.`,
+               );
+            }
+            firstRun = false;
+            continue;
+         }
+
          const updates = response.data.result;
          for (const update of updates) {
             offset = update.update_id + 1;
