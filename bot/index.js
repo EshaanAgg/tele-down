@@ -264,6 +264,9 @@ const recursiveSendFiles = async (dir, chatId, fileName) => {
    );
 
    const multimediaFiles = getMultimediaFiles(files);
+   const nonMultimediaFiles = files.filter(
+      (file) => !multimediaFiles.includes(file),
+   );
 
    let message = `📁 \`${dir}\`
 
@@ -281,6 +284,11 @@ This directory has:
       message += `\n\nExample Subdirectories: \n${subDirs
          .slice(0, 5)
          .map((d) => `- \`${d}\``)
+         .join('\n')}`;
+   if (nonMultimediaFiles.length)
+      message += `\n\nExample Non-Multimedia Files: \n${nonMultimediaFiles
+         .slice(0, 5)
+         .map((f) => `- \`${f}\``)
          .join('\n')}`;
 
    await sendMessage(chatId, message);
