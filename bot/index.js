@@ -4,22 +4,15 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const unzipper = require('unzipper');
 const FormData = require('form-data');
+const unrar = require('node-unrar-js');
 
 // CONSTANTS
 const UNZIP_DIR = './unzipped/';
 const BASE_SERVER_URL = 'http://localhost:8081';
 const LEFT_OVER_POLLS = {
-   zip_polls: [],
+   archive_polls: [],
 };
-const SUPPORTED_PHOTO_TYPES = [
-   'jpg',
-   'jpeg',
-   'png',
-   'gif',
-   'webp',
-   'tiff',
-   'svg',
-];
+const SUPPORTED_PHOTO_TYPES = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'tiff'];
 const SUPPORTED_VIDEO_TYPES = ['mp4', 'avi', 'mov', 'mkv', 'webm', '.ts'];
 
 // GLOBALS
@@ -55,14 +48,17 @@ const setupBot = async () => {
 
 const sendDownloadPathMessage = async (chatId, filePath) => {
    const fileName = path.basename(filePath);
-   const relativePath = path.relative(__dirname, filePath);
+   const relativePath = path.relative(`${__dirname}/..`, filePath);
 
    const message =
-      'Downloaded ```' +
+      '✅Downloaded `' +
       fileName +
-      '``` successfully on the server!\n\n\n You can find the file at ```' +
+      '` successfully on the server!\n\n\n- File Name: `' +
+      fileName +
+      '`\n- Path: `' +
       relativePath +
-      '``` in the server.';
+      '`';
+   await sendMessage(chatId, message);
 };
 
 /*
@@ -75,6 +71,7 @@ const sendMessage = async (chatId, text) => {
    const response = await client.post('/sendMessage', {
       chat_id: chatId,
       text,
+      parse_mode: 'Markdown',
    });
    return response.data.result.message_id;
 };
@@ -160,7 +157,9 @@ const sendFile = async (chatId, filePath) => {
    }
 };
 /*
- * Download a file from Telegram, given the file ID
+ * Download a file from Telegram, given the file ID. Note that this method can be quite
+ * RAM intensive for large files (>= 1GB) and may cause the other parallely running processes
+ * to lag.
  * @param {string} fileId - The file ID to download
  * @returns {Promise<File>} - A promise that resolves with the file of the downloaded file
  * @throws {Error} If the file could not be downloaded
@@ -171,20 +170,46 @@ const downloadFile = async (fileId) => {
 };
 
 /*
- * Unzip a file to a directory
- * @param {string} zipFilePath - The path to the zip file
- * @param {string} outputDir - The directory to unzip the file to
- * @returns {Promise<void>} - A promise that resolves when the file is unzipped successfully
+ * Extract a ZIP or RAR file to a directory
+ * @param {string} archiveFilePath - The path to the archive file (zip or rar)
+ * @param {string} outputDir - The directory to extract the file to
+ * @returns {Promise<void>} - A promise that resolves when the file is extracted successfully
  */
-const unzipFile = async (zipFilePath, outputDir) => {
-   return fs
-      .createReadStream(zipFilePath)
-      .pipe(unzipper.Extract({ path: outputDir }))
-      .promise();
+/*
+ * Extract a ZIP or RAR file to a directory
+ * @param {string} archiveFilePath - The path to the archive file (zip or rar)
+ * @param {string} outputDir - The directory to extract the file to
+ * @returns {Promise<void>} - A promise that resolves when the file is extracted successfully
+ */
+const extractArchive = async (archiveFilePath, outputDir) => {
+   const fileExtension = path.extname(archiveFilePath).toLowerCase();
+
+   if (fileExtension === '.zip') {
+      // Handle ZIP files
+      return fs
+         .createReadStream(archiveFilePath)
+         .pipe(unzipper.Extract({ path: outputDir }))
+         .promise();
+   } else if (fileExtension === '.rar') {
+      // Handle RAR files using createExtractorFromFile
+      const extractor = await unrar.createExtractorFromFile({
+         filepath: archiveFilePath,
+         targetPath: outputDir,
+      });
+
+      const extractorResult = extractor.extract();
+      //    Iterate over the extracted files as the extractor is a generator
+      for (const file of extractorResult.files) {
+         console.log('Extracted file:', file.fileHeader.name);
+      }
+   } else {
+      throw new Error(
+         'Unsupported file format. Only .zip and .rar are supported.',
+      );
+   }
 };
 
 // Handlers
-
 /*
  * Processes the messages recieved from the Telegram API
  */
@@ -195,12 +220,19 @@ const handleMessage = async (chatId, message) => {
 };
 
 /*
- * Processes the ZIP documents recieved from the Telegram API
+ * Processes archive documents recieved from the Telegram API
+ * Currently it downloads them locally, and then sends a poll to the user to ask them
+ * if want to be sent back the unzipped contents
  */
-const handleZipDocument = async (chatId, document) => {
-   await sendMessage(chatId, `Received "${document.file_name}". Processing...`);
+const handleArchive = async (chatId, document) => {
+   await sendMessage(
+      chatId,
+      `Downloading the archive "${document.file_name}".`,
+   );
 
+   console.log(`[DOWNLOAD] Start "${document.file_name}"`);
    const file = await downloadFile(document.file_id);
+   console.log(`[DOWNLOAD] Completed "${document.file_name}"`);
    await sendDownloadPathMessage(chatId, file.file_path);
 
    const pollId = await sendPoll(
@@ -208,7 +240,7 @@ const handleZipDocument = async (chatId, document) => {
       'Would you like me to send the unzipped the files back to you?',
       ['Yes', 'No'],
    );
-   LEFT_OVER_POLLS['zip_polls'].push({
+   LEFT_OVER_POLLS['archive_polls'].push({
       pollId,
       filePath: file.file_path,
       fileName: document.file_name,
@@ -221,7 +253,7 @@ const handleZipDocument = async (chatId, document) => {
  * Currently, it only handles the ZIP poll response
  */
 const handlePollResponse = async (poll) => {
-   const pollIndex = LEFT_OVER_POLLS['zip_polls'].findIndex(
+   const pollIndex = LEFT_OVER_POLLS['archive_polls'].findIndex(
       (p) => p.pollId === poll.id,
    );
    if (pollIndex === -1) {
@@ -231,25 +263,33 @@ const handlePollResponse = async (poll) => {
 
    // Get the poll and remove it from the list
    const { filePath, chatId, fileName } =
-      LEFT_OVER_POLLS['zip_polls'][pollIndex];
-   LEFT_OVER_POLLS['zip_polls'].splice(pollIndex, 1);
+      LEFT_OVER_POLLS['archive_polls'][pollIndex];
+   LEFT_OVER_POLLS['archive_polls'].splice(pollIndex, 1);
 
    // Process the poll response
    const sendBack =
       poll.options[poll.options.findIndex((option) => option.voter_count > 0)]
          .text === 'Yes';
    if (sendBack) {
-      const unzipDir = path.join(UNZIP_DIR, path.basename(filePath, '.zip'));
+      // Unzip the file into the appropiate directory
+      const extension = path.extname(filePath);
+      const unzipDir = path.join(UNZIP_DIR, path.basename(filePath, extension));
       if (!fs.existsSync(unzipDir)) fs.mkdirSync(unzipDir);
-      await unzipFile(filePath, unzipDir);
+      await extractArchive(filePath, unzipDir);
 
+      // Send the files back to the user
       const files = fs.readdirSync(unzipDir);
-      await sendMessage(chatId, `Sending ${files.length} to you!`);
+      await sendMessage(
+         chatId,
+         `🕒Trying to send the extracted files (${files.length}) to you!`,
+      );
 
       for (const file of files) {
          const fileToSend = path.join(unzipDir, file);
          await sendFile(chatId, fileToSend);
       }
+
+      // Cleanup the unzipped directory
       fs.rmSync(unzipDir, { recursive: true, force: true });
       await sendMessage(
          chatId,
@@ -268,8 +308,11 @@ const handlePollResponse = async (poll) => {
  * by dispatching them to the appropriate handler
  */
 const handleDocument = async (chatId, document) => {
-   if (document.mime_type === 'application/zip')
-      await handleZipDocument(chatId, document);
+   if (
+      document.file_name.endsWith('.zip') ||
+      document.file_name.endsWith('.rar')
+   )
+      await handleArchive(chatId, document);
    else await sendMessage(chatId, "I currently don't support this file type!");
 };
 
