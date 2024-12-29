@@ -50,6 +50,7 @@ Current the bot has the following functionality:
 - Sending a `.zip` or `.rar` file: 
   - The bot will download the file on the computer running the server and send a message with the file path.
   - You can also choose if you want the bot to send back the unzipped files (this is very useful if you want to get unzipped video or images from a `.zip` file, and then view them using Telegram's inbuilt player!).
+    - If you choose `Yes` for the above option, the bot will send give you the information of one directory at a time, and you can choose which directory want to recursively explore more and whose multimedia files you want to be sent back! 
 - Sending any `video` or `image` file:
   - The bot will download the file on the computer running the server and send a message with the file path.
   - For images, all the different sizes of the image will be downloaded.
