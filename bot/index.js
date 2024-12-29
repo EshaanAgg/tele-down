@@ -11,6 +11,16 @@ const BASE_SERVER_URL = 'http://localhost:8081';
 const LEFT_OVER_POLLS = {
    zip_polls: [],
 };
+const SUPPORTED_PHOTO_TYPES = [
+   'jpg',
+   'jpeg',
+   'png',
+   'gif',
+   'webp',
+   'tiff',
+   'svg',
+];
+const SUPPORTED_VIDEO_TYPES = ['mp4', 'avi', 'mov', 'mkv', 'webm', '.ts'];
 
 // GLOBALS
 let client = undefined;
@@ -41,6 +51,18 @@ const setupBot = async () => {
       console.error('Error starting the bot:', error.message);
       process.exit(1);
    }
+};
+
+const sendDownloadPathMessage = async (chatId, filePath) => {
+   const fileName = path.basename(filePath);
+   const relativePath = path.relative(__dirname, filePath);
+
+   const message =
+      'Downloaded ```' +
+      fileName +
+      '``` successfully on the server!\n\n\n You can find the file at ```' +
+      relativePath +
+      '``` in the server.';
 };
 
 /*
@@ -74,6 +96,48 @@ const sendPoll = async (chatId, question, options) => {
 };
 
 /*
+ * Send a photo to a chat
+ * @param {number} chatId - The chat ID to send the photo to
+ * @param {string} photoPath - The path to the photo to send
+ * @returns {Promise<number>} The message ID of the sent photo
+ * @throws {Error} If the photo could not be sent
+ */
+const sendPhoto = async (chatId, photoPath) => {
+   let photoData = fs.readFileSync(photoPath);
+   let formData = new FormData();
+   formData.append('chat_id', chatId);
+   formData.append('photo', photoData, {
+      filename: path.basename(photoPath),
+   });
+
+   const response = await client.post('/sendPhoto', formData, {
+      headers: formData.getHeaders(),
+   });
+   return response.data.result.message_id;
+};
+
+/*
+ * Send a video to a chat
+ * @param {number} chatId - The chat ID to send the video to
+ * @param {string} videoPath - The path to the video to send
+ * @returns {Promise<number>} The message ID of the sent video
+ * @throws {Error} If the video could not be sent
+ */
+const sendVideo = async (chatId, videoPath) => {
+   let videoData = fs.readFileSync(videoPath);
+   let formData = new FormData();
+   formData.append('chat_id', chatId);
+   formData.append('video', videoData, {
+      filename: path.basename(videoPath),
+   });
+
+   const response = await client.post('/sendVideo', formData, {
+      headers: formData.getHeaders(),
+   });
+   return response.data.result.message_id;
+};
+
+/*
  * Send a document to a chat
  * @param {number} chatId - The chat ID to send the document to
  * @param {string} filePath - The path to the file to send
@@ -83,34 +147,11 @@ const sendFile = async (chatId, filePath) => {
    // Check the file type
    const fileType = path.extname(filePath).slice(1);
 
-   // Send images using Multipart/form-data
-   if (['jpg', 'jpeg', 'png', 'gif'].includes(fileType)) {
-      let imageData = fs.readFileSync(filePath);
-      let formData = new FormData();
-      formData.append('chat_id', chatId);
-      formData.append('photo', imageData, {
-         filename: path.basename(filePath),
-      });
-
-      const response = await client.post('/sendPhoto', formData, {
-         headers: formData.getHeaders(),
-      });
-      return response.data.result.message_id;
-   }
-   // Send videos using Multipart/form-data
-   else if (['mp4', 'avi', 'mov', 'mkv', 'webm', ".ts"].includes(fileType)) {
-      let videoData = fs.readFileSync(filePath);
-      let formData = new FormData();
-      formData.append('chat_id', chatId);
-      formData.append('video', videoData, {
-         filename: path.basename(filePath),
-      });
-
-      const response = await client.post('/sendVideo', formData, {
-         headers: formData.getHeaders(),
-      });
-      return response.data.result.message_id;
-   } else {
+   if (SUPPORTED_PHOTO_TYPES.includes(fileType))
+      return await sendPhoto(chatId, filePath);
+   else if (SUPPORTED_VIDEO_TYPES.includes(fileType))
+      return await sendVideo(chatId, filePath);
+   else {
       const messageID = await sendMessage(
          chatId,
          `I don't support sending files of type "${fileType}" [File: "${path.basename(filePath)}"].`,
@@ -160,10 +201,7 @@ const handleZipDocument = async (chatId, document) => {
    await sendMessage(chatId, `Received "${document.file_name}". Processing...`);
 
    const file = await downloadFile(document.file_id);
-   await sendMessage(
-      chatId,
-      `Downloaded "${document.file_name}" successfully on the server! You can find the file at "${file.file_path}" on the server.`,
-   );
+   await sendDownloadPathMessage(chatId, file.file_path);
 
    const pollId = await sendPoll(
       chatId,
@@ -204,10 +242,10 @@ const handlePollResponse = async (poll) => {
       const unzipDir = path.join(UNZIP_DIR, path.basename(filePath, '.zip'));
       if (!fs.existsSync(unzipDir)) fs.mkdirSync(unzipDir);
       await unzipFile(filePath, unzipDir);
-      
+
       const files = fs.readdirSync(unzipDir);
-      await sendMessage(chatId, `Sending ${files.length} to you!`)
-      
+      await sendMessage(chatId, `Sending ${files.length} to you!`);
+
       for (const file of files) {
          const fileToSend = path.join(unzipDir, file);
          await sendFile(chatId, fileToSend);
@@ -236,15 +274,28 @@ const handleDocument = async (chatId, document) => {
 };
 
 /*
+ * Processes the photos or videos recieved from the Telegram API
+ * Currently, it just downloads the same locally and sends a message back
+ */
+const handleMultimedia = async (chatId, photo) => {
+   for (const mediaSize of photo) {
+      const file = await downloadFile(mediaSize.file_id);
+      await sendDownloadPathMessage(chatId, file.file_path);
+   }
+};
+
+/*
  * Process updates from the Telegram API
  * Destructure's the update object and dispatches it to the appropriate handler
  */
 const handleUpdate = async (update) => {
    if (update.message) {
-      const { chat, text, document } = update.message;
+      const { chat, text, document, photo, video } = update.message;
       const chatId = chat.id;
 
-      if (document) await handleDocument(chatId, document);
+      if (photo) await handleMultimedia(chatId, photo);
+      else if (video) await handleMultimedia(chatId, video);
+      else if (document) await handleDocument(chatId, document);
       else if (text) await handleMessage(chatId, text);
       else {
          await sendMessage(chatId, "I don't understand that message.");

@@ -33,13 +33,16 @@ npm run start
 
 7. You are all set! You can now use the bot to download files from Telegram at a blazing speed!
 
-## Functionality
+## Current Functionality
 
 Current the bot has the following functionality:
 - Message `/start` - Start the bot and send a health check message.
 - Sending a `.zip` file: 
   - The bot will download the file on the computer running the server and send a message with the file path.
   - You can also choose if you want the bot to send back the unzipped files (this is very useful if you want to get unzipped video or images from a `.zip` file, and then view them using Telegram's inbuilt player!).
+- Sending any `video` or `image` file:
+  - The bot will download the file on the computer running the server and send a message with the file path.
+  - For images, all the different sizes of the image will be downloaded.
 
 ## How to Customize
 
