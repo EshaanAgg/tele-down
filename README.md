@@ -33,6 +33,10 @@ npm run start
 
 7. You are all set! You can now use the bot to download files from Telegram at a blazing speed!
 
+## Quick Run
+
+You can use the `make run` command directly in the terminal after installation to run both the server and the bot. Please be careful that using this command would clear all the local data and the downloaded files from your system. If you do not wish to do the same, then you can run the bot and the server in seperate terminals as described in the installation process.  
+
 ## Current Functionality
 
 Current the bot has the following functionality:

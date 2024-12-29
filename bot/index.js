@@ -198,14 +198,33 @@ const extractArchive = async (archiveFilePath, outputDir) => {
       });
 
       const extractorResult = extractor.extract();
+
       //    Iterate over the extracted files as the extractor is a generator
-      for (const file of extractorResult.files) {
-         console.log('Extracted file:', file.fileHeader.name);
+      for (const _ of extractorResult.files) {
       }
    } else {
       throw new Error(
          'Unsupported file format. Only .zip and .rar are supported.',
       );
+   }
+};
+
+/*
+ * Recursively send files in a directory to a chat
+ * @param {string} dir - The directory to send the files from
+ * @param {number} chatId - The chat ID to send the files to
+ * @param {string} fileName - The name of the file to send
+ * @param {number} ident - The number of spaces to indent the message
+ * @returns {Promise<void>} - A promise that resolves when all the files are sent
+ */
+const recursiveSendFiles = async (dir, chatId, fileName, ident = 0) => {
+   console.log(`[SEND FILES] ${'-'.repeat(ident)} ${dir}`);
+   const files = fs.readdirSync(dir);
+   for (const file of files) {
+      const filePath = path.join(dir, file);
+      if (fs.statSync(filePath).isDirectory())
+         await recursiveSendFiles(filePath, chatId, fileName, ident + 2);
+      else await sendFile(chatId, filePath);
    }
 };
 
@@ -264,6 +283,10 @@ const handlePollResponse = async (poll) => {
    // Get the poll and remove it from the list
    const { filePath, chatId, fileName } =
       LEFT_OVER_POLLS['archive_polls'][pollIndex];
+   console.log(
+      `[POLL] Received response for "${fileName}" | Path: "${filePath}"`,
+   );
+
    LEFT_OVER_POLLS['archive_polls'].splice(pollIndex, 1);
 
    // Process the poll response
@@ -275,19 +298,12 @@ const handlePollResponse = async (poll) => {
       const extension = path.extname(filePath);
       const unzipDir = path.join(UNZIP_DIR, path.basename(filePath, extension));
       if (!fs.existsSync(unzipDir)) fs.mkdirSync(unzipDir);
+
+      console.log(`[UNZIP] Start "${fileName}" in "${unzipDir}"`);
       await extractArchive(filePath, unzipDir);
+      console.log(`[UNZIP] Completed "${fileName}"`);
 
-      // Send the files back to the user
-      const files = fs.readdirSync(unzipDir);
-      await sendMessage(
-         chatId,
-         `🕒Trying to send the extracted files (${files.length}) to you!`,
-      );
-
-      for (const file of files) {
-         const fileToSend = path.join(unzipDir, file);
-         await sendFile(chatId, fileToSend);
-      }
+      await recursiveSendFiles(unzipDir, chatId, fileName);
 
       // Cleanup the unzipped directory
       fs.rmSync(unzipDir, { recursive: true, force: true });

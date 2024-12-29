@@ -1,6 +1,9 @@
 .env
+
+# All intermediate files
 server
 telegram-bot-api
+server_bin
 
 bot/node_modules
 bot/unzipped
