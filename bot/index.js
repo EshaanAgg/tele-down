@@ -235,9 +235,8 @@ const extractArchive = async (archiveFilePath, outputDir) => {
 
       const extractorResult = extractor.extract();
 
-      //    Iterate over the extracted files as the extractor is a generator
-      for (const _ of extractorResult.files) {
-      }
+      // Iterate over the extracted files as the extractor is a lazy generator
+      for (const _ of extractorResult.files) {}
    } else {
       throw new Error(
          'Unsupported file format. Only .zip and .rar are supported.',
@@ -280,11 +279,13 @@ This directory has:
          .slice(0, 5)
          .map((f) => `- \`${f}\``)
          .join('\n')}`;
+   
    if (subDirs.length)
       message += `\n\nExample Subdirectories: \n${subDirs
          .slice(0, 5)
          .map((d) => `- \`${d}\``)
          .join('\n')}`;
+   
    if (nonMultimediaFiles.length)
       message += `\n\nExample Non-Multimedia Files: \n${nonMultimediaFiles
          .slice(0, 5)
@@ -293,13 +294,11 @@ This directory has:
 
    await sendMessage(chatId, message);
 
-   if (multimediaFiles.length > 0) {
+   if (multimediaFiles.length > 0) 
       await askToSendMultimediaFiles(chatId, dir, fileName);
-   }
 
-   if (subDirs.length > 0) {
+   if (subDirs.length > 0) 
       await askToExploreSubdirectories(chatId, dir, fileName);
-   }
 };
 
 /**
